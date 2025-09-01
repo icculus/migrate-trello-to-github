@@ -510,7 +510,7 @@ sub upload_cards {
             foreach (@$trello_actions) {
                 my $action = $_;
                 next if (not defined $action->{'data'}->{'card'}) or ($action->{'data'}->{'card'}->{'id'} ne $card_id);
-                next i  f (defined $seen_actions{$action->{'id'}});  # we might have gotten duplicates in the full actions set.
+                next if (defined $seen_actions{$action->{'id'}});  # we might have gotten duplicates in the full actions set.
                 $seen_actions{$action->{'id'}} = 1;
                 my $date = $$action{'date'};
                 my $extra = 0.0;
