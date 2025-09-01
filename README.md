@@ -66,7 +66,7 @@ You also need some pieces from Trello.
 
 First, you need the URL of the board to migrate. This is just the address
 in the web browser when you first load the board. It looks something like
-`https://https://trello.com/b/abc123xY/my-todo-list`.
+`https://trello.com/b/abc123xY/my-todo-list`.
 
 If the board is private, you'll want to make it public while this script
 downloads its data. As soon as that is complete you can make the board
@@ -97,14 +97,14 @@ page, you'll want to copy the "API key" and "Secret" strings.
 The simplest form is this:
 
 ```bash
-./migrate-trello-to-github.pl board-export.json MyGithubUsername NewGithubRepoName GITHUB_API_TOKEN state-directory
+./migrate-trello-to-github.pl https://trello.com/b/abc123xY/my-todo-list MyGithubUsername NewGithubRepoName GITHUB_API_TOKEN state-directory
 ```
 
 Where `GITHUB_API_TOKEN` is the GitHub API token you generated,
 state-directory is a temporary scratch directory that the script will create.
 
 This will make a new GitHub repo at https://github.com/MyGithubUsername/NewGithubRepoName
-and import all the data from board-export.json. Some comments and other
+and import all the data from https://trello.com/b/abc123xY/my-todo-list. Some comments and other
 activity from the Trello cards might be missing because we didn't provide a
 Trello API key in this example.
 
