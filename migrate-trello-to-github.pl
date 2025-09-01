@@ -431,7 +431,7 @@ sub github_sanitize_string {
     my $str = shift;
     $str =~ s/\#(\d+)/# $1/g;   # Make sure these don't generate references to GitHub issues.
     $str =~ s/\@([a-zA-Z0-9_])/\@ $1/g;   # Make sure these don't generate references to GitHub users
-    return str;
+    return $str;
 }
 
 sub upload_cards {
