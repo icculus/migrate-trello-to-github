@@ -427,6 +427,13 @@ sub find_attachment {
     return undef;
 }
 
+sub github_sanitize_string {
+    my $str = shift;
+    $str =~ s/\#(\d+)/# $1/g;   # Make sure these don't generate references to GitHub issues.
+    $str =~ s/\@([a-zA-Z0-9_])/\@ $1/g;   # Make sure these don't generate references to GitHub users
+    return str;
+}
+
 sub upload_cards {
     my $trello_cards = $trello->{'cards'};
     my $card_index = 0;
@@ -437,7 +444,7 @@ sub upload_cards {
         my $card = $_;
         my $card_id = $$card{'id'};
         my $name = $$card{'name'};
-        my $desc = $$card{'desc'};
+        my $desc = github_sanitize_string($$card{'desc'});
         my $cardurl = $$card{'url'};
         my $cover = $$card{'cover'};
         my $issue = undef;
@@ -463,7 +470,7 @@ sub upload_cards {
             my $attachment = find_attachment($card, $att_id);
             if (defined $attachment) {
                 my $att_fname = $$attachment{'fileName'};
-                my $att_name = $$attachment{'name'};
+                my $att_name = github_sanitize_string($$attachment{'name'});
                 my $url = attachment_url($att_id, $att_fname);
                 $body .= "![$att_name]($url)\n\n";
             }
@@ -479,7 +486,7 @@ sub upload_cards {
                 my $attachment = $_;
                 my $att_id = $$attachment{'id'};
                 my $att_fname = $$attachment{'fileName'};
-                my $att_name = $$attachment{'name'};
+                my $att_name = github_sanitize_string($$attachment{'name'});
                 my $url = attachment_url($att_id, $att_fname);
                 my $date = date_from_iso8601($$attachment{'date'});
                 $body .= "- [**$att_name**]($url)\n";
@@ -491,12 +498,12 @@ sub upload_cards {
         my $idchecklists = $card->{'idChecklists'};
         foreach (@$idchecklists) {
             my $checklist = $checklist_map{$_};
-            my $checklistname = $$checklist{'name'};
+            my $checklistname = github_sanitize_string($$checklist{'name'});
             my $checkitems = $$checklist{'checkItems'};
             $body .= "## $checklistname\n\n";
             foreach (@$checkitems) {
                 my $checkitem = $_;
-                my $checkitemname = $$checkitem{'name'};
+                my $checkitemname = github_sanitize_string($$checkitem{'name'});
                 my $X = ($$checkitem{'state'} eq 'complete') ? 'X' : ' ';
                 $body .= " - [$X] $checkitemname\n";
             }
@@ -523,14 +530,12 @@ sub upload_cards {
                 $actions{$epoch} = $action;
             }
 
-            my $comment_post_intensity = 0;
-            my $comment_post_intensity_threshold = 10;
             my $action_index = 0;
             foreach (sort { $a <=> $b } keys %actions) {
                 my $action = $actions{$_};
                 my $origdate = date_from_iso8601($$action{'date'});
                 my $date = $origdate;
-                my $fullname = $$action{'memberCreator'}->{"fullName"};
+                my $fullname = github_sanitize_string($$action{'memberCreator'}->{"fullName"});
                 my $username = $$action{'memberCreator'}->{"username"};
                 my $ghusername = $usermap{$username};
                 my $namestr = defined $ghusername ? "$fullname (\@$ghusername)" : $fullname;
@@ -549,40 +554,40 @@ sub upload_cards {
                     my $att_id = $data->{'attachment'}->{'id'};
                     my $attachment = find_attachment($card, $att_id);
                     if (defined $attachment) {
-                        my $att_name = $$attachment{'name'};
+                        my $att_name = github_sanitize_string($$attachment{'name'});
                         my $att_fname = $$attachment{'fileName'};
                         my $url = attachment_url($att_id, $att_fname);
                         $comment = "$namestr attached [$att_name]($url) to this card\n\n$date";
                     }
                 } elsif ($type eq 'addChecklistToCard') {
                     my $checklist = $$data{'checklist'};
-                    my $checklistname = $$checklist{'name'};
+                    my $checklistname = github_sanitize_string($$checklist{'name'});
                     $comment = "$namestr added $checklistname to this card\n\n$date";
                 } elsif ($type eq 'removeChecklistFromCard') {
                     my $checklist = $$data{'checklist'};
-                    my $checklistname = $$checklist{'name'};
+                    my $checklistname = github_sanitize_string($$checklist{'name'});
                     $comment = "$namestr removed $checklistname from this card\n\n$date";
                 } elsif ($type eq 'updateCheckItemStateOnCard') {
                     my $verbed = ($data->{'checkItem'}->{'state'} eq 'complete') ? 'completed' : 'reverted';
-                    my $checkitemname = $data->{'checkItem'}->{'name'};
+                    my $checkitemname = github_sanitize_string($data->{'checkItem'}->{'name'});
                     $comment = "$namestr $verbed $checkitemname on this card\n\n$date";
                 } elsif ($type eq 'commentCard') {
-                    my $text = $$data{'text'};
+                    my $text = github_sanitize_string($$data{'text'});
                     $cardurl = "https://trello.com/c/" . $data->{'card'}->{'shortLink'} . "#comment-$action_id";
                     $date = "[$origdate]($cardurl)";
                     $comment = "$namestr $date\n\n$text";
                 } elsif ($type eq 'createCard') {
-                    my $listname = $data->{'list'}->{'name'};
+                    my $listname = github_sanitize_string($data->{'list'}->{'name'});
                     $comment = "$namestr added this card to $listname\n\n$date";
                 } elsif ($type eq 'emailCard') {
-                    my $listname = $data->{'list'}->{'name'};
+                    my $listname = github_sanitize_string($data->{'list'}->{'name'});
                     $comment = "$namestr emailed this card to $listname\n\n$date";
                 } elsif ($type eq 'updateCard') {
                     my $listname = $data->{'list'}->{'name'};
                     my $old = $$data{'old'};
                     if (exists $$old{'idList'}) {
-                        my $oldlistname = $data->{'listBefore'}->{'name'};
-                        my $newlistname = $data->{'listAfter'}->{'name'};
+                        my $oldlistname = github_sanitize_string($data->{'listBefore'}->{'name'});
+                        my $newlistname = github_sanitize_string($data->{'listAfter'}->{'name'});
                         $comment = "$namestr moved this card from $oldlistname to $newlistname\n\n$date";
                     } elsif (exists $$old{'closed'}) {
                         my $verbed = ($data->{'card'}->{'closed'}) ? 'archived' : 'unarchived';
@@ -594,12 +599,12 @@ sub upload_cards {
                         my $oldidlabels = $$old{'idLabels'};
                         my %oldlabels = ();
                         foreach(@$oldidlabels) {
-                            $oldlabels{$label_map{$$_{'id'}}} = $_;
+                            $oldlabels{$label_map{$_}} = $_;
                         }
                         my $newidlabels = $data->{'card'}->{'idLabels'};
                         my %newlabels = ();
                         foreach(@$newidlabels) {
-                            $newlabels{$label_map{$$_{'id'}}} = $_;
+                            $newlabels{$label_map{$_}} = $_;
                         }
 
                         my @added = ();
@@ -615,30 +620,30 @@ sub upload_cards {
                             $comment = "$namestr added labels:";
                             my $sep = ' ';
                             foreach (@added) {
-                                $comment .= "$sep$_";
+                                $comment .= $sep . github_sanitize_string($_);
                                 $sep = ', '
                             }
                             $comment .= "\n\n$date";
                         } elsif (scalar(@added) == 1) {
-                            $comment = "$namestr added the label " . $added[0] . "\n\n$date";
+                            $comment = "$namestr added the label " . github_sanitize_string($added[0]) . "\n\n$date";
                         }
 
                         if (scalar(@removed) > 1) {
                             $comment = "$namestr removed labels:";
                             my $sep = ' ';
                             foreach (@removed) {
-                                $comment .= "$sep$_";
+                                $comment .= $sep . github_sanitize_string($_);
                                 $sep = ', '
                             }
                             $comment .= "\n\n$date";
                         } elsif (scalar(@removed) == 1) {
-                            $comment = "$namestr removed the label " . $added[0] . "\n\n$date";
+                            $comment = "$namestr removed the label " . github_sanitize_string($added[0]) . "\n\n$date";
                         }
                     } elsif (exists $$old{'desc'}) {
                         # Ignore this one, Trello doesn't report this either, and it could be a massive edit.
                     } elsif (exists $$old{'name'}) {
-                        my $newname = $data->{'card'}->{'name'};
-                        my $oldname = $$old{'name'};
+                        my $newname = github_sanitize_string($data->{'card'}->{'name'});
+                        my $oldname = github_sanitize_string($$old{'name'});
                         $comment = "$namestr renamed this card from $oldname to $newname\n\n$date";
                     } elsif (exists $$old{'due'}) {
                         my $due = $data->{'card'}->{'due'};
@@ -834,5 +839,6 @@ upload_cards();
 $migration_finished = 1;
 print("\n\nMigration complete!\n\n");
 print("You can delete the '$restart_state_path' directory now.\n\n");
+print("API keys can be deleted too, if you like.\n\n");
 
 # end of migrate-trello-to-github.pl ...
