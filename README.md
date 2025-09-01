@@ -131,7 +131,7 @@ Other options you can add to the script:
   Specify Trello API keys. These are the "API key" and "Secret" fields we
   mentioned before.
 
--- `--no-rate-limit`
+- `--no-rate-limit`
 
   This script sleeps a little from time to time to try to avoid triggering
   GitHub's rate limiting. If you have permission from GitHub to go
@@ -140,7 +140,7 @@ Other options you can add to the script:
   later, though, so you might want this if you plan to babysit the script,
   too.
 
--- `--skip-card-activity`
+- `--skip-card-activity`
 
   Just upload the description, cover, attachments, and checklists for all
   cards. Comments and other activity will be ignored. Cleaner, if the
