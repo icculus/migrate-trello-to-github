@@ -29,8 +29,6 @@ my $restart_state_actions_oldest = undef;
 my $restart_state_attachment_download = 0;
 my $restart_state_created_repo = 0;
 my $restart_state_card_upload = 0;
-my $restart_state_card_action = 0;
-my $restart_state_card_current_issue = 0;
 my $no_rate_limit = 0;
 my $skip_card_activity = 0;
 my $migration_finished = -1;
@@ -115,8 +113,6 @@ sub load_restart_state {
         $restart_state_attachment_download = int(<STATEIN>);
         $restart_state_created_repo = int(<STATEIN>);
         $restart_state_card_upload = int(<STATEIN>);
-        $restart_state_card_action = int(<STATEIN>);
-        $restart_state_card_current_issue = int(<STATEIN>);
         close(STATEIN);
     }
     $migration_finished = 0;  # now safe to save this out on exit.
@@ -130,8 +126,6 @@ sub save_restart_state {
     print STATEOUT "$restart_state_attachment_download\n";
     print STATEOUT "$restart_state_created_repo\n";
     print STATEOUT "$restart_state_card_upload\n";
-    print STATEOUT "$restart_state_card_action\n";
-    print STATEOUT "$restart_state_card_current_issue\n";
     close(STATEOUT) or die("Failed to write '$restart_state_path': $!\n");
 }
 
@@ -278,8 +272,6 @@ sub prep_repo {
         $github->repos->RaiseError(1);
         $restart_state_created_repo = 0;
         $restart_state_card_upload = 0;
-        $restart_state_card_action = 0;
-        $restart_state_card_current_issue = 0;
         system("rm -rf '$clonepath'");
     }
 
@@ -444,7 +436,6 @@ sub upload_cards {
         next if ($card_index++ < $restart_state_card_upload);  # skip ones we already did.
         my $card = $_;
         my $card_id = $$card{'id'};
-#next if $card_id ne '5283049e1bedb9473d00440a';
         my $name = $$card{'name'};
         my $desc = $$card{'desc'};
         my $cardurl = $$card{'url'};
@@ -462,73 +453,55 @@ sub upload_cards {
         $listlabel = substr($listlabel, 0, 50); # no more than 50 characters long!
         push @labels, $listlabel;
 
-        if ($restart_state_card_current_issue) {
-            print("Continuing on card $card_index of $total_cards: '$name'\n");
-            $issue = $github->issue->issue($restart_state_card_current_issue);
-        } else {
-            print("Creating card $card_index of $total_cards: '$name'\n");
+        print("Creating card $card_index of $total_cards: '$name'\n");
+        print("  - Original Trello card is $cardurl\n");
 
-            my $body = "# $name\n\n";
+        my $body = '';
 
-            if (defined $cover->{'idAttachment'}) {
-                my $att_id = $cover->{'idAttachment'};
-                my $attachment = find_attachment($card, $att_id);
-                if (defined $attachment) {
-                    my $att_fname = $$attachment{'fileName'};
-                    my $att_name = $$attachment{'name'};
-                    my $url = attachment_url($att_id, $att_fname);
-                    $body .= "![$att_name]($url)\n\n";
-                }
+        if (defined $cover->{'idAttachment'}) {
+            my $att_id = $cover->{'idAttachment'};
+            my $attachment = find_attachment($card, $att_id);
+            if (defined $attachment) {
+                my $att_fname = $$attachment{'fileName'};
+                my $att_name = $$attachment{'name'};
+                my $url = attachment_url($att_id, $att_fname);
+                $body .= "![$att_name]($url)\n\n";
             }
-
-            $body .= "###### (This issue was originally from [this Trello card]($cardurl).)\n\n";
-            $body .= "$desc\n\n";
-
-            my $attachments = $card->{'attachments'};
-            if (scalar(@$attachments) > 0) {
-                $body .= "## Attachments\n\n";
-                foreach (@$attachments) {
-                    my $attachment = $_;
-                    my $att_id = $$attachment{'id'};
-                    my $att_fname = $$attachment{'fileName'};
-                    my $att_name = $$attachment{'name'};
-                    my $url = attachment_url($att_id, $att_fname);
-                    my $date = date_from_iso8601($$attachment{'date'});
-                    $body .= "- [**$att_name**]($url)\n";
-                    $body .= "  Added $date\n";
-                }
-                $body .= "\n";
-            }
-
-            my $idchecklists = $card->{'idChecklists'};
-            foreach (@$idchecklists) {
-                my $checklist = $checklist_map{$_};
-                my $checklistname=  $$checklist{'name'};
-                my $checkitems = $$checklist{'checkItems'};
-                $body .= "## $checklistname\n\n";
-                foreach (@$checkitems) {
-                    my $checkitem = $_;
-                    my $checkitemname = $$checkitem{'name'};
-                    my $X = ($$checkitem{'state'} eq 'complete') ? 'X' : ' ';
-                    $body .= " - [$X] $checkitemname\n";
-                }
-                $body .= "\n";
-            }
-
-            $issue = $github->issue->create_issue( {
-                "title" => $name,
-                "body" => $body,
-            } );
-
-            # block a few seconds, this tends to help with GitHub rate limits.
-            rate_limit_sleep(5);
         }
 
-        my $issue_number = int($$issue{'number'});
+        $body .= "###### (This issue was originally from [this Trello card]($cardurl).)\n\n";
+        $body .= "$desc\n\n";
 
-        $restart_state_card_current_issue = $issue_number;
-        print("  - Original Trello card is $cardurl\n");
-        print("  - GitHub issue is https://github.com/$github_username/$github_reponame/issues/$issue_number\n");
+        my $attachments = $card->{'attachments'};
+        if (scalar(@$attachments) > 0) {
+            $body .= "## Attachments\n\n";
+            foreach (@$attachments) {
+                my $attachment = $_;
+                my $att_id = $$attachment{'id'};
+                my $att_fname = $$attachment{'fileName'};
+                my $att_name = $$attachment{'name'};
+                my $url = attachment_url($att_id, $att_fname);
+                my $date = date_from_iso8601($$attachment{'date'});
+                $body .= "- [**$att_name**]($url)\n";
+                $body .= "  Added $date\n";
+            }
+            $body .= "\n";
+        }
+
+        my $idchecklists = $card->{'idChecklists'};
+        foreach (@$idchecklists) {
+            my $checklist = $checklist_map{$_};
+            my $checklistname = $$checklist{'name'};
+            my $checkitems = $$checklist{'checkItems'};
+            $body .= "## $checklistname\n\n";
+            foreach (@$checkitems) {
+                my $checkitem = $_;
+                my $checkitemname = $$checkitem{'name'};
+                my $X = ($$checkitem{'state'} eq 'complete') ? 'X' : ' ';
+                $body .= " - [$X] $checkitemname\n";
+            }
+            $body .= "\n";
+        }
 
         if (!$skip_card_activity) {
             my $trello_actions = $trello->{'actions'};
@@ -537,7 +510,7 @@ sub upload_cards {
             foreach (@$trello_actions) {
                 my $action = $_;
                 next if (not defined $action->{'data'}->{'card'}) or ($action->{'data'}->{'card'}->{'id'} ne $card_id);
-                next if (defined $seen_actions{$action->{'id'}});  # we might have gotten duplicates in the full actions set.
+                next i  f (defined $seen_actions{$action->{'id'}});  # we might have gotten duplicates in the full actions set.
                 $seen_actions{$action->{'id'}} = 1;
                 my $date = $$action{'date'};
                 my $extra = 0.0;
@@ -554,7 +527,6 @@ sub upload_cards {
             my $comment_post_intensity_threshold = 10;
             my $action_index = 0;
             foreach (sort { $a <=> $b } keys %actions) {
-                next if ($action_index++ < $restart_state_card_action);  # skip ones we already did.
                 my $action = $actions{$_};
                 my $origdate = date_from_iso8601($$action{'date'});
                 my $date = $origdate;
@@ -580,37 +552,41 @@ sub upload_cards {
                         my $att_name = $$attachment{'name'};
                         my $att_fname = $$attachment{'fileName'};
                         my $url = attachment_url($att_id, $att_fname);
-                        $comment = "$namestr attached [$att_name]($url) to this card\n\n$date\n";
+                        $comment = "$namestr attached [$att_name]($url) to this card\n\n$date";
                     }
                 } elsif ($type eq 'addChecklistToCard') {
                     my $checklist = $$data{'checklist'};
                     my $checklistname = $$checklist{'name'};
-                    $comment = "$namestr added $checklistname to this card\n\n$date\n";
+                    $comment = "$namestr added $checklistname to this card\n\n$date";
+                } elsif ($type eq 'removeChecklistFromCard') {
+                    my $checklist = $$data{'checklist'};
+                    my $checklistname = $$checklist{'name'};
+                    $comment = "$namestr removed $checklistname from this card\n\n$date";
                 } elsif ($type eq 'updateCheckItemStateOnCard') {
                     my $verbed = ($data->{'checkItem'}->{'state'} eq 'complete') ? 'completed' : 'reverted';
                     my $checkitemname = $data->{'checkItem'}->{'name'};
-                    $comment = "$namestr $verbed $checkitemname on this card\n\n$date\n";
+                    $comment = "$namestr $verbed $checkitemname on this card\n\n$date";
                 } elsif ($type eq 'commentCard') {
                     my $text = $$data{'text'};
                     $cardurl = "https://trello.com/c/" . $data->{'card'}->{'shortLink'} . "#comment-$action_id";
                     $date = "[$origdate]($cardurl)";
-                    $comment = "$namestr $date\n\n$text\n";
+                    $comment = "$namestr $date\n\n$text";
                 } elsif ($type eq 'createCard') {
                     my $listname = $data->{'list'}->{'name'};
-                    $comment = "$namestr added this card to $listname\n\n$date\n";
+                    $comment = "$namestr added this card to $listname\n\n$date";
                 } elsif ($type eq 'emailCard') {
                     my $listname = $data->{'list'}->{'name'};
-                    $comment = "$namestr emailed this card to $listname\n\n$date\n";
+                    $comment = "$namestr emailed this card to $listname\n\n$date";
                 } elsif ($type eq 'updateCard') {
                     my $listname = $data->{'list'}->{'name'};
                     my $old = $$data{'old'};
                     if (exists $$old{'idList'}) {
                         my $oldlistname = $data->{'listBefore'}->{'name'};
                         my $newlistname = $data->{'listAfter'}->{'name'};
-                        $comment = "$namestr moved this card from $oldlistname to $newlistname\n\n$date\n";
+                        $comment = "$namestr moved this card from $oldlistname to $newlistname\n\n$date";
                     } elsif (exists $$old{'closed'}) {
                         my $verbed = ($data->{'card'}->{'closed'}) ? 'archived' : 'unarchived';
-                        $comment = "$namestr $verbed this card\n\n$date\n";
+                        $comment = "$namestr $verbed this card\n\n$date";
                     } elsif (exists $$old{'pos'}) {
                         # Ignore this one, I think it's the card moving to a different position in the same list.
                     } elsif (exists $$old{'idLabels'}) {
@@ -642,9 +618,9 @@ sub upload_cards {
                                 $comment .= "$sep$_";
                                 $sep = ', '
                             }
-                            $comment .= "\n\n$date\n";
+                            $comment .= "\n\n$date";
                         } elsif (scalar(@added) == 1) {
-                            $comment = "$namestr added the label " . $added[0] . "\n\n";
+                            $comment = "$namestr added the label " . $added[0] . "\n\n$date";
                         }
 
                         if (scalar(@removed) > 1) {
@@ -654,24 +630,26 @@ sub upload_cards {
                                 $comment .= "$sep$_";
                                 $sep = ', '
                             }
-                            $comment .= "\n\n";
+                            $comment .= "\n\n$date";
                         } elsif (scalar(@removed) == 1) {
-                            $comment = "$namestr removed the label " . $added[0] . "\n\n$date\n";
+                            $comment = "$namestr removed the label " . $added[0] . "\n\n$date";
                         }
                     } elsif (exists $$old{'desc'}) {
                         # Ignore this one, Trello doesn't report this either, and it could be a massive edit.
                     } elsif (exists $$old{'name'}) {
                         my $newname = $data->{'card'}->{'name'};
                         my $oldname = $$old{'name'};
-                        $comment = "$namestr renamed this card from $oldname to $newname\n\n$date\n";
+                        $comment = "$namestr renamed this card from $oldname to $newname\n\n$date";
                     } elsif (exists $$old{'due'}) {
                         my $due = $data->{'card'}->{'due'};
                         if (defined $due) {
                             my $newdate = date_from_iso8601($due);
-                            $comment = "$namestr changed this card's due date to $newdate\n\n$date\n";
+                            $comment = "$namestr changed this card's due date to $newdate\n\n$date";
                         } else {
-                            $comment = "$namestr removed this card's due date\n\n$date\n";
+                            $comment = "$namestr removed this card's due date\n\n$date";
                         }
+                    } elsif (exists $$old{'idMembers'}) {
+                        # ignore this.
                     } else {
                         print STDERR "\n\n\nUnknown updateCard type for id $action_id! Ignoring it! Please update the script!\n\n\n\n";
                     }
@@ -696,23 +674,21 @@ sub upload_cards {
                 }
 
                 if (defined $comment) {
-                    print("  - Creating comment for action $type from $origdate...\n");
-                    $github->issue->create_comment($issue_number, { 'body' => $comment });
-                    $comment_post_intensity++;
-                    if ($comment_post_intensity >= $comment_post_intensity_threshold) {
-                        rate_limit_sleep(5);  # add a delay to make this friendly to rate-limiting.
-                        $comment_post_intensity = 0;
-                    }
+                    $body .= "\n----\n\n$comment\n";
                 }
-                $restart_state_card_action = $action_index;
             }
         }
 
-        if (scalar(@labels) > 0) {
-            print("  - Setting labels...\n");
-            $github->issue->create_issue_label($issue_number, \@labels);
-            rate_limit_sleep(2);
-        }
+        $issue = $github->issue->create_issue( {
+            "title" => $name,
+            "body" => $body,
+            "labels" => \@labels
+        } );
+
+        my $issue_number = int($$issue{'number'});
+        print("  - GitHub issue is https://github.com/$github_username/$github_reponame/issues/$issue_number\n");
+
+        rate_limit_sleep(3);
 
         if ($card->{'closed'}) {
             print("  - Closing issue...\n");
@@ -720,8 +696,6 @@ sub upload_cards {
             rate_limit_sleep(1);
         }
 
-        $restart_state_card_action = 0;
-        $restart_state_card_current_issue = 0;
         $restart_state_card_upload = $card_index;
     }
 }
