@@ -41,7 +41,7 @@ my %label_map = ();   # map hash strings to actual labels.
 my %member_map = ();   # map hash strings to actual members.
 
 # Command line stuff...
-my $trello_json_path = undef;
+my $trello_board_url = undef;
 my $github_username = undef;
 my $github_reponame = undef;
 my $github_repo_title = undef;
@@ -53,7 +53,7 @@ my $destroy_existing_repo = 0;
 my %usermap = ();
 
 sub usage {
-    print STDERR "USAGE: $0 <trello_export_json> <github_username> <github_reponame> <github_repo_title> <github_api_token> <workdir> [--usermap=a:b] [--destroy-existing-repo] [--trello-api-key=STRING] [--trello-api-token=STRING] [--no-rate-limit] [--skip-card-activity]\n";
+    print STDERR "USAGE: $0 <trello_board_url> <github_username> <github_reponame> <github_repo_title> <github_api_token> <workdir> [--usermap=a:b] [--destroy-existing-repo] [--trello-api-key=STRING] [--trello-api-token=STRING] [--no-rate-limit] [--skip-card-activity]\n";
     exit(1);
 }
 
@@ -69,7 +69,7 @@ sub parse_commandline {
         $trello_api_token = $1, next if (/\A\-\-trello\-api\-token\=(.*)\Z/);
         $destroy_existing_repo = 1, next if $_ eq '--destroy-existing-repo';
         $no_rate_limit = 1, next if $_ eq '--no-rate-limit';
-        $trello_json_path = $_, next if not defined $trello_json_path;
+        $trello_board_url = $_, next if not defined $trello_board_url;
         $github_username = $_, next if not defined $github_username;
         $github_reponame = $_, next if not defined $github_reponame;
         $github_repo_title = $_, next if not defined $github_repo_title;
@@ -79,7 +79,7 @@ sub parse_commandline {
         usage();
     }
 
-    usage() if not defined $trello_json_path;
+    usage() if not defined $trello_board_url;
     usage() if not defined $github_username;
     usage() if not defined $github_reponame;
     usage() if not defined $github_repo_title;
@@ -88,7 +88,7 @@ sub parse_commandline {
 
     $github_repo = "$github_username/$github_reponame";
 
-    print("Trello export filename: $trello_json_path\n");
+    print("Trello board URL: $trello_board_url\n");
     print("GitHub repo: https://github.com/$github_repo\n");
     print("GitHub repo title: $github_repo_title\n");
     print("GitHub API token: $github_token\n");
@@ -142,6 +142,20 @@ sub rate_limit_sleep {
 }
 
 sub load_trello_json {
+    my $trello_json_path = "$restart_state_path/board.json";
+    if ( ! -f $trello_json_path ) {
+        my $url = $trello_board_url . '.json';
+        print("Downloading board JSON from '$url' ...\n");
+        my $data = get($url);
+        if (not defined $data) {
+            die("Couldn't download '$url' ...please make sure the Trello board is public while we download initial data.\n");
+        }
+        open(JSONOUT, '>', $trello_json_path) or die("Failed to open '$trello_json_path': %!\n");
+        binmode(JSONOUT);
+        unlink($trello_json_path), die("Failed to write '$trello_json_path: $!\n") if not print JSONOUT $data;
+        unlink($trello_json_path), die("Failed to write '$trello_json_path: $!\n") if not close(JSONOUT);
+    }
+
     open(JSONIN, '<', $trello_json_path) or die("Failed to open '$trello_json_path': %!\n");
     # Don't set this, decode_json expects binary.
     #binmode JSONIN, ':utf8';

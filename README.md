@@ -64,17 +64,15 @@ behalf.
 
 You also need some pieces from Trello.
 
-First, you need an export of the board to migrate. In the web interface, when
-you load a board, the "..." menu in the top right has a
-"Print, export, and share" link. Click that, and then the "Export as JSON"
-link. Save that to disk. We'll call that saved file board-export.json for the
-example below, but the filename doesn't matter.
+First, you need the URL of the board to migrate. This is just the address
+in the web browser when you first load the board. It looks something like
+`https://https://trello.com/b/abc123xY/my-todo-list`.
 
 If the board is private, you'll want to make it public while this script
-downloads its attachments. As soon as that is complete you can make the board
+downloads its data. As soon as that is complete you can make the board
 private again. The script will tell you when it is done downloading. If the
 script has to run multiple times, it'll will still only have to do the
-attachment download once, and will save the data between runs.
+download once, and will save the data between runs.
 
 It is optional, but you should also get an access token from Trello. You can
 use this script without one, but we can't migrate the full history for every
