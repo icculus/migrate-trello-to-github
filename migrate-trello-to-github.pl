@@ -37,6 +37,7 @@ my %list_map = ();        # map hash strings to actual lists.
 my %checklist_map = ();   # map hash strings to actual checklists.
 my %label_map = ();   # map hash strings to actual labels.
 my %member_map = ();   # map hash strings to actual members.
+my %card_to_issue_map = ();  # map card ids to github issue numbers.
 
 # Command line stuff...
 my $trello_board_url = undef;
@@ -264,6 +265,8 @@ sub auth_to_github {
 
 sub prep_repo {
     my $clonepath = "$restart_state_path/repo";
+    my $msmappath = "$restart_state_path/milestone-map.txt";
+    my $cardmap_path = "$restart_state_path/card-issue-map.txt";
 
     if ($destroy_existing_repo) {
         print("Destroying existing repo...\n");
@@ -312,17 +315,22 @@ sub prep_repo {
         }
 
         # we can't really mess with project boards in a meaningful way here,
-        # so add a label for each Trello card list instead.
+        # so add a milestone for each Trello card list instead.
+        print("Building GitHub milestones...\n");
+        my $msmappath = "$restart_state_path/milestone-map.txt";
+        open(FHMM, '>', $msmappath) or die("Failed to open '$msmappath': $!\n");
         my $trello_lists = $trello->{'lists'};
         foreach (@$trello_lists) {
             my $list = $_;
-            my $labelname = $$list{'name'};
-            $labelname = substr($labelname, 0, 50); # no more than 50 characters long!
-            $github->issue->create_label({
-                "name" => $labelname,
-                "color" => '000000'    # make each label black so we know it's a list tag.
+            my $milestonename = $$list{'name'};
+            my $milestone = $github->issue->create_milestone({
+                "title" => $milestonename,
+                "state" => $$list{'closed'} ? 'closed' : 'open',
             });
+            $$list{'milestone'} = $$milestone{'id'};
+            print FHMM $$list{'id'} . '=' . $$milestone{'number'} . "\n";
         }
+        close(FHMM) or die("Failed to write '$msmappath': $!\n");
 
 if (0) {  # !!! FIXME: you can't really do much with project boards through the API, only the web UI.  :(
         print("Building project board...\n");
@@ -387,7 +395,9 @@ if (0) {  # !!! FIXME: you can't really do much with project boards through the 
     if ( ! -f $readmepath ) {
         open(my $fh, '>', $readmepath) or die("Couldn't create '$readmepath': $!\n");
         my $trello_url = $trello->{'url'};
-        print $fh "# $github_repo_title\n\nThis is a migration of [a Trello board]($trello_url) to GitHub.\n\n";
+        print $fh "# $github_repo_title\n\n";
+        print $fh "This is a migration of [a Trello board]($trello_url) to GitHub.\n\n";
+        print $fh "This migration was done by [migrate-trello-to-github](https://github.com/icculus/migrate-trello-to-github).\n\n";
         close($fh) or die("Couldn't write '$readmepath': $!\n");
     }
 
@@ -398,6 +408,24 @@ if (0) {  # !!! FIXME: you can't really do much with project boards through the 
 
     print("Git repository is prepared!\n");
     print("github repo is https://github.com/$github_username/$github_reponame\n");
+
+    open(FHMM, '<', $msmappath) or die("Failed to open '$msmappath': $!\n");
+    while (<FHMM>) {
+        my ($list_id, $milestone_id) = /\A(.*?)\=(.*?)\Z/;
+        my $listname = $list_map{$list_id}->{'name'};
+        $list_map{$list_id}->{'milestone'} = $milestone_id;
+        printf("TRELLO LIST '$listname' is GITHUB MILESTONE $milestone_id\n");
+    }
+    close(FHMM);
+
+    if ( -f $cardmap_path ) {
+        open(FHCARDMAP, '<', $cardmap_path) or die("Failed to open '$cardmap_path': $!\n");
+        while (<FHCARDMAP>) {
+            my ($card_id, $issue_number) = /\A(.*?)\=(.*?)\Z/;
+            $card_to_issue_map{$card_id} = $issue_number;
+        }
+        close(FHCARDMAP);
+    }
 }
 
 sub date_from_iso8601 {
@@ -429,12 +457,15 @@ sub find_attachment {
 
 sub github_sanitize_string {
     my $str = shift;
-    $str =~ s/\#(\d+)/# $1/g;   # Make sure these don't generate references to GitHub issues.
-    $str =~ s/\@([a-zA-Z0-9_])/\@ $1/g;   # Make sure these don't generate references to GitHub users
+    if (defined $str) {
+        $str =~ s/\#(\d+)/# $1/g;   # Make sure these don't generate references to GitHub issues.
+        $str =~ s/\@([a-zA-Z0-9_])/\@ $1/g;   # Make sure these don't generate references to GitHub users
+    }
     return $str;
 }
 
 sub upload_cards {
+    my $cardmap_path = "$restart_state_path/card-issue-map.txt";
     my $trello_cards = $trello->{'cards'};
     my $card_index = 0;
     my $total_cards = scalar(@$trello_cards);
@@ -456,9 +487,7 @@ sub upload_cards {
             push @labels, $$label{'name'};
         }
 
-        my $listlabel = $list_map{$$card{'idList'}}->{'name'};
-        $listlabel = substr($listlabel, 0, 50); # no more than 50 characters long!
-        push @labels, $listlabel;
+        my $milestone = $list_map{$$card{'idList'}}->{'milestone'};
 
         print("Creating card $card_index of $total_cards: '$name'\n");
         print("  - Original Trello card is $cardurl\n");
@@ -538,7 +567,7 @@ sub upload_cards {
                 my $fullname = github_sanitize_string($$action{'memberCreator'}->{"fullName"});
                 my $username = $$action{'memberCreator'}->{"username"};
                 my $ghusername = $usermap{$username};
-                my $namestr = defined $ghusername ? "$fullname (\@$ghusername)" : $fullname;
+                my $namestr = defined $ghusername ? "\@$ghusername" : $fullname;
                 my $action_id = $$action{'id'};
                 my $type = $$action{'type'};
                 my $data = $$action{'data'};
@@ -553,12 +582,22 @@ sub upload_cards {
                 if ($type eq 'addAttachmentToCard') {
                     my $att_id = $data->{'attachment'}->{'id'};
                     my $attachment = find_attachment($card, $att_id);
-                    if (defined $attachment) {
+                    if (not defined $attachment) {
+                        my $att_name = github_sanitize_string($data->{'attachment'}->{'name'});
+                        $comment = "$namestr attached $att_name (content later removed) to this card\n\n$date";
+                    } else {
                         my $att_name = github_sanitize_string($$attachment{'name'});
                         my $att_fname = $$attachment{'fileName'};
                         my $url = attachment_url($att_id, $att_fname);
-                        $comment = "$namestr attached [$att_name]($url) to this card\n\n$date";
+                        $comment = "$namestr attached [$att_name]($url) to this card\n\n";
+                        if ($att_fname =~ /\.(png|jpg|gif|webp)\Z/) {
+                            $comment .= "![$att_name]($url)\n\n";
+                        }
+                        $comment .= $date;
                     }
+                } elsif ($type eq 'deleteAttachmentFromCard') {
+                    my $att_name = github_sanitize_string($data->{'attachment'}->{'name'});
+                    $comment = "$namestr deleted attachment $att_name from this card\n\n$date";
                 } elsif ($type eq 'addChecklistToCard') {
                     my $checklist = $$data{'checklist'};
                     my $checklistname = github_sanitize_string($$checklist{'name'});
@@ -582,6 +621,25 @@ sub upload_cards {
                 } elsif ($type eq 'emailCard') {
                     my $listname = github_sanitize_string($data->{'list'}->{'name'});
                     $comment = "$namestr emailed this card to $listname\n\n$date";
+                } elsif ($type eq 'convertToCardFromCheckItem') {
+                    my $listname = github_sanitize_string($data->{'list'}->{'name'});
+                    my $oldcardid = $data->{'cardSource'}->{'id'};
+                    my $oldissuenum = $card_to_issue_map{$oldcardid};
+                    my $oldcard = github_sanitize_string($data->{'cardSource'}->{'name'});
+                    if (defined $oldissuenum) {
+                        $oldcard .= " (#$oldissuenum)";
+                    }
+                    $comment = "$namestr converted this card from a checklist item on $oldcard\n\n$date";
+                } elsif ($type eq 'copyCard') {
+                    my $listname = github_sanitize_string($data->{'list'}->{'name'});
+                    my $oldcardid = $data->{'cardSource'}->{'id'};
+                    my $oldissuenum = $card_to_issue_map{$oldcardid};
+                    my $oldcard = github_sanitize_string($data->{'cardSource'}->{'name'});
+                    my $oldlistname = github_sanitize_string($data->{'list'}->{'name'});
+                    if (defined $oldissuenum) {
+                        $oldcard .= " (#$oldissuenum)";
+                    }
+                    $comment = "$namestr copied this card from $oldcard in list $listname\n\n$date";
                 } elsif ($type eq 'updateCard') {
                     my $listname = $data->{'list'}->{'name'};
                     my $old = $$data{'old'};
@@ -601,7 +659,15 @@ sub upload_cards {
                         foreach(@$oldidlabels) {
                             $oldlabels{$label_map{$_}} = $_;
                         }
+
                         my $newidlabels = $data->{'card'}->{'idLabels'};
+
+                        # a bug(?) in trello's export sometimes mangles newidlabels. Try to manage it...
+                        # Sometimes it looks like this: [ [ [ 'otherwise_valid_hashid' ] ], [] ]
+                        while ((scalar(@$newidlabels) > 0) and (ref($$newidlabels[0]) eq 'ARRAY')) {
+                            $newidlabels = $$newidlabels[0];
+                        }
+
                         my %newlabels = ();
                         foreach(@$newidlabels) {
                             $newlabels{$label_map{$_}} = $_;
@@ -610,10 +676,10 @@ sub upload_cards {
                         my @added = ();
                         my @removed = ();
                         foreach (keys %oldlabels) {
-                            push @removed, $label_map{$_}->{'name'} if (not defined $newlabels{$_});
+                            push @removed, $label_map{$_}->{'name'} if (not defined $newlabels{$_} and defined $label_map{$_}->{'name'});
                         }
                         foreach (keys %newlabels) {
-                            push @added, $label_map{$_}->{'name'} if (not defined $oldlabels{$_});
+                            push @added, $label_map{$_}->{'name'} if (not defined $oldlabels{$_} and defined $label_map{$_}->{'name'});
                         }
 
                         if (scalar(@added) > 1) {
@@ -655,6 +721,12 @@ sub upload_cards {
                         }
                     } elsif (exists $$old{'idMembers'}) {
                         # ignore this.
+                    } elsif (exists $$old{'dueReminder'}) {
+                        # ignore this (we can't set a reminder on a GitHub issue, afaik)
+                    } elsif (exists $$old{'dueComplete'}) {
+                        # ignore this (we handle due dates elsewhere)
+                    } elsif (exists $$old{'idAttachmentCover'}) {
+                        # ignore this (we already show the cover and the attachment upload, it's fine. I think.)
                     } else {
                         print STDERR "\n\n\nUnknown updateCard type for id $action_id! Ignoring it! Please update the script!\n\n\n\n";
                     }
@@ -687,11 +759,17 @@ sub upload_cards {
         $issue = $github->issue->create_issue( {
             "title" => $name,
             "body" => $body,
+            "milestone" => $milestone,
             "labels" => \@labels
         } );
 
         my $issue_number = int($$issue{'number'});
         print("  - GitHub issue is https://github.com/$github_username/$github_reponame/issues/$issue_number\n");
+
+        $card_to_issue_map{$card_id} = $issue_number;
+        open(CARDMAPFH, '>>', $cardmap_path) or die("Failed to open '$cardmap_path': $!\n");
+        print CARDMAPFH "$card_id=$issue_number\n" or die("Failed to write to '$cardmap_path': $!\n");
+        close(CARDMAPFH) or die("Failed to write to '$cardmap_path': $!\n");
 
         rate_limit_sleep(3);
 
